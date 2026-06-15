@@ -85,6 +85,8 @@ class EagerRunner(BaseRunner):
     Public surface (the :class:`BaseRunner` ABC):
       - can_run_graph(forward_batch) -> False (always; the dispatch gate that
         keeps callers from routing an eager batch into a graph-replay branch).
+      - warmup() — inherited; run-once kernel warmup + flashinfer autotune,
+        triggered on the first execute() (eager has no capture step).
       - load_batch(forward_batch, ...) — copy the live batch into the eager
         static buffers (the grow-on-demand registry view).
       - execute(forward_batch, ...) — init attention metadata + run
@@ -225,6 +227,11 @@ class EagerRunner(BaseRunner):
     def execute(
         self, forward_batch: ForwardBatch, pp_proxy_tensors=None, **kwargs
     ) -> Any:
+        # Eager has no capture step, so it owns the kernel warmup: run it once
+        # on the first execute(). warmup() is run-once across all runners via
+        # ModelRunner._kernel_warmed_up, so this is a cheap no-op afterward (and
+        # a no-op too if a cuda-graph runner already warmed up during capture).
+        self.warmup()
         mode = forward_batch.forward_mode
         if mode.is_decode():
             return self._execute_decode(forward_batch, pp_proxy_tensors)
