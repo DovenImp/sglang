@@ -15,6 +15,7 @@ with ``tp_worker`` / ``draft_worker`` set as attributes. Each runner's
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
 import torch
 
 from sglang.srt.managers.io_struct import CheckWeightsReqInput
@@ -23,6 +24,9 @@ from sglang.srt.managers.scheduler_update_weights_mixin import (
 )
 from sglang.srt.speculative.ngram_worker import NGRAMWorker
 from sglang.srt.utils.weight_checker import _RESET_SENTINEL, WeightChecker
+from sglang.test.ci.ci_register import register_cuda_ci
+
+register_cuda_ci(est_time=20, stage="stage-b", runner_config="1-gpu-small")
 
 
 class _TestScheduler(SchedulerUpdateWeightsMixin):
@@ -429,3 +433,9 @@ def test_target_selector_reset_and_compare_touch_target_only():
         assert out.success is True, action
         target_runner.check_weights.assert_called_once_with(action=action)
         draft_runner.check_weights.assert_not_called()
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(pytest.main([__file__, "-v"]))

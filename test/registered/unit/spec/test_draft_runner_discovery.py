@@ -18,6 +18,9 @@ from sglang.srt.speculative.eagle_worker import EAGLEWorker
 from sglang.srt.speculative.eagle_worker_v2 import EAGLEWorkerV2
 from sglang.srt.speculative.multi_layer_eagle_worker_v2 import MultiLayerEagleWorkerV2
 from sglang.srt.speculative.ngram_worker import NGRAMWorker
+from sglang.test.ci.ci_register import register_cuda_ci
+
+register_cuda_ci(est_time=15, stage="stage-b", runner_config="1-gpu-small")
 
 
 def _new(cls, **attrs):
@@ -113,3 +116,9 @@ def test_worker_without_method_fails_loudly():
     # old helper's ValueError on an unrecognized worker.
     with pytest.raises(AttributeError):
         SimpleNamespace().iter_draft_runners()
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(pytest.main([__file__, "-v"]))
