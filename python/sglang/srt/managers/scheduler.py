@@ -1473,10 +1473,17 @@ class Scheduler(
         # forward's reads. Fast path (non-spec decode cuda-graph): wait on the
         # read-done event recorded after replay_prepare so the forward's compute
         # overlaps prep. Else fall back to the whole-forward wait_stream.
+        # shared_buf_read_done_safe gates the fast path: it is only set once the
+        # capture-time self-test proves the captured graph reads its static
+        # snapshot, not the live shared pool (see DecodeCudaGraphRunner).
         if not self._war_barrier_enabled:
             return
         mr = self._war_barrier_runner
-        if self.spec_algorithm.is_none() and mr.shared_buf_read_done_fresh:
+        if (
+            self.spec_algorithm.is_none()
+            and mr.shared_buf_read_done_safe
+            and mr.shared_buf_read_done_fresh
+        ):
             self.schedule_stream.wait_event(mr.shared_buf_read_done_event)
             mr.shared_buf_read_done_fresh = False
         else:

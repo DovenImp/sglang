@@ -572,6 +572,14 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         # shared buffers (req_to_token / SWA mapping); the scheduler waits on it.
         self.shared_buf_read_done_event = torch.get_device_module(self.device).Event()
         self.shared_buf_read_done_fresh = False
+        # Gate for the fine-grained fast path: only sound if the captured decode
+        # graph reads its static metadata snapshot, never the live shared pool.
+        # Stays False (whole-forward fallback) until a lazy isolation check, run
+        # on the first real decodes (where the KV cache holds varied content),
+        # proves the isolation holds for this backend.
+        self.shared_buf_read_done_safe = False
+        self._war_fastpath_checked = False
+        self._war_fastpath_check_attempts = 0
 
         # CPU offload
         set_offloader(create_offloader_from_server_args(server_args, dp_rank=dp_rank))

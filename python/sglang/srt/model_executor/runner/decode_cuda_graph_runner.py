@@ -74,6 +74,9 @@ from sglang.srt.model_executor.runner.base_cuda_graph_runner import (
     get_batch_sizes_to_capture,
 )
 from sglang.srt.model_executor.runner.shape_key import ShapeKey
+from sglang.srt.model_executor.runner.war_fastpath_check import (
+    maybe_run_war_fastpath_check,
+)
 from sglang.srt.model_executor.runner_backend.breakable_cuda_graph_backend import (
     BreakableCudaGraphBackend,
 )
@@ -1049,6 +1052,12 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
         forward_batch: ForwardBatch,
         pp_proxy_tensors: Optional[PPProxyTensors] = None,
     ) -> Union[LogitsProcessorOutput, PPProxyTensors]:
+        # One-shot isolation check gating the read-done fast path. Runs BEFORE
+        # the real replay (in its own session) so the real backend.replay writes
+        # the output buffer last; uses this batch's real, varied KV and
+        # self-isolates with a device sync.
+        maybe_run_war_fastpath_check(self, forward_batch)
+
         timer_ctx = (
             self.model_runner.device_timer.wrap(
                 metadata={"category": forward_batch.forward_mode.name.lower()}
