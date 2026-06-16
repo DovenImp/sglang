@@ -1464,7 +1464,6 @@ class Scheduler(
         self._war_barrier_enabled = (
             is_cuda() or envs.SGLANG_ENABLE_WAR_BARRIER.get()
         ) and not self.spec_algorithm.is_dflash()
-        self._war_barrier_runner = self.tp_worker.model_runner
         with self.device_module.StreamContext(self.schedule_stream):
             dispatch_event_loop(self)
 
@@ -1473,12 +1472,12 @@ class Scheduler(
         # forward's reads. Fast path (non-spec decode cuda-graph): wait on the
         # read-done event the prev forward published after replay_prepare so its
         # compute overlaps prep, then clear it. Else fall back to the whole-
-        # forward wait_stream. shared_buf_read_done_safe gates the fast path: it
-        # is only set once the isolation check proves the captured graph reads
-        # its static snapshot, not the live shared pool (see war_fastpath_check).
+        # forward wait_stream. war_fastpath.safe gates the fast path: it is only
+        # set once the isolation check proves the captured graph reads its static
+        # snapshot, not the live shared pool (see war_fastpath_check).
         if not self._war_barrier_enabled:
             return
-        wf = self._war_barrier_runner.war_fastpath
+        wf = self.tp_worker.model_runner.war_fastpath
         if self.spec_algorithm.is_none() and wf.safe and wf.read_done_event is not None:
             self.schedule_stream.wait_event(wf.read_done_event)
             wf.read_done_event = None
