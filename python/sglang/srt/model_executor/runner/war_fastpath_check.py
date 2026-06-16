@@ -28,6 +28,7 @@ has no observable signal there; the first real, long-enough decode does.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
 import torch
@@ -48,6 +49,24 @@ _MIN_PROBE_LEN = 32
 _MAX_ATTEMPTS = 8
 
 
+@dataclass
+class WarFastpathState:
+    """State for the WAR fine-grained fast path, owned by ModelRunner.
+
+    read_done_event: a decode-graph forward publishes a fresh event here after
+      reading the shared pool (req_to_token / SWA mapping); the scheduler waits
+      on it then clears it. None -> no fresh read-done event (e.g. after an
+      eager/prefill forward) -> whole-forward fallback.
+    safe: the fast path is sound for this backend (isolation check passed).
+    checked / check_attempts: one-shot lazy-check bookkeeping.
+    """
+
+    read_done_event: Optional[torch.cuda.Event] = None
+    safe: bool = False
+    checked: bool = False
+    check_attempts: int = 0
+
+
 def maybe_run_war_fastpath_check(
     runner: DecodeCudaGraphRunner, forward_batch: ForwardBatch
 ) -> None:
@@ -57,18 +76,18 @@ def maybe_run_war_fastpath_check(
     a conclusive verdict. SAFE -> enable; UNSAFE / give-up -> stay disabled (the
     conservative whole-forward wait_stream).
     """
-    mr = runner.model_runner
-    if mr._war_fastpath_checked:
+    wf = runner.model_runner.war_fastpath
+    if wf.checked:
         return
     # The fast path is only taken on the non-spec decode cuda-graph path; skip
     # configs this probe does not model.
     if (
-        not mr.spec_algorithm.is_none()
+        not runner.model_runner.spec_algorithm.is_none()
         or runner.pp_size > 1
         or runner.enable_pdmux
         or runner.enable_two_batch_overlap
     ):
-        mr._war_fastpath_checked = True
+        wf.checked = True
         return
     bs = forward_batch.batch_size
     if forward_batch.seq_lens_cpu is None or bs < 1:
@@ -85,27 +104,27 @@ def maybe_run_war_fastpath_check(
         )
         verdict = "error"
     finally:
-        mr.shared_buf_read_done_fresh = False  # probe replays toggled it
+        wf.read_done_event = None  # drop any event the probe published
 
     if verdict == "safe":
-        mr.shared_buf_read_done_safe = True
-        mr._war_fastpath_checked = True
+        wf.safe = True
+        wf.checked = True
         logger.info("WAR fast-path enabled: decode graph reads static snapshot only.")
     elif verdict == "unsafe":
-        mr._war_fastpath_checked = True
+        wf.checked = True
         logger.warning(
             "WAR fast-path disabled: decode graph reads the live pool in-graph; "
             "using whole-forward barrier."
         )
     else:  # inconclusive / error -> retry on a later decode
-        mr._war_fastpath_check_attempts += 1
-        if mr._war_fastpath_check_attempts >= _MAX_ATTEMPTS:
-            mr._war_fastpath_checked = True
+        wf.check_attempts += 1
+        if wf.check_attempts >= _MAX_ATTEMPTS:
+            wf.checked = True
             logger.info(
                 "WAR fast-path disabled (%s after %d attempts); using whole-forward "
                 "barrier.",
                 verdict,
-                mr._war_fastpath_check_attempts,
+                wf.check_attempts,
             )
 
 

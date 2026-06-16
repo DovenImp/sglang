@@ -172,6 +172,7 @@ from sglang.srt.model_executor.runner import (
 from sglang.srt.model_executor.runner.decode_cuda_graph_runner import (
     _allocate_decode_buffers,
 )
+from sglang.srt.model_executor.runner.war_fastpath_check import WarFastpathState
 from sglang.srt.model_executor.runner_backend_utils.tc_piecewise_cuda_graph import (
     enable_tc_piecewise_cuda_graph,
     set_tc_piecewise_forward_context,
@@ -568,18 +569,10 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         # Init forward stream for overlap schedule
         self.forward_stream = torch.get_device_module(self.device).Stream()
 
-        # WAR fine-grained barrier: a forward records this after reading the
-        # shared buffers (req_to_token / SWA mapping); the scheduler waits on it.
-        self.shared_buf_read_done_event = torch.get_device_module(self.device).Event()
-        self.shared_buf_read_done_fresh = False
-        # Gate for the fine-grained fast path: only sound if the captured decode
-        # graph reads its static metadata snapshot, never the live shared pool.
-        # Stays False (whole-forward fallback) until a lazy isolation check, run
-        # on the first real decodes (where the KV cache holds varied content),
-        # proves the isolation holds for this backend.
-        self.shared_buf_read_done_safe = False
-        self._war_fastpath_checked = False
-        self._war_fastpath_check_attempts = 0
+        # WAR fine-grained barrier state: a decode-graph forward publishes a
+        # read-done event the scheduler waits on, gated by a one-shot isolation
+        # check. See war_fastpath_check.WarFastpathState.
+        self.war_fastpath = WarFastpathState()
 
         # CPU offload
         set_offloader(create_offloader_from_server_args(server_args, dp_rank=dp_rank))
